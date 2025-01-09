@@ -1,65 +1,132 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject } from 'cloudflare:workers';
+import { z } from 'zod';
 
-/**
- * Welcome to Cloudflare Workers! This is your first Durable Objects application.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your Durable Object in action
- * - Run `npm run deploy` to publish your application
- *
- * Bind resources to your worker in `wrangler.toml`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/durable-objects
- */
+// Increment and deploy to invalidate cache
+const CACHE_NAME = 'items-v1';
 
-/** A Durable Object's behavior is defined in an exported Javascript class */
-export class MyDurableObject extends DurableObject {
-	/**
-	 * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
-	 * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
-	 *
-	 * @param ctx - The interface for interacting with Durable Object state
-	 * @param env - The interface to reference bindings declared in wrangler.toml
-	 */
-	constructor(ctx: DurableObjectState, env: Env) {
-		super(ctx, env);
-	}
+// Shopify API stuff
+const BASE_URL = 'https://www.blackwhiteroasters.com';
+const SECTION_NAME = 'specialty-instant-coffee';
+const PRODUCTS_ENDPOINT = `${BASE_URL}/collections/${SECTION_NAME}/products.json`;
 
-	/**
-	 * The Durable Object exposes an RPC method sayHello which will be invoked when when a Durable
-	 *  Object instance receives a request from a Worker via the same method invocation on the stub
-	 *
-	 * @param name - The name provided to a Durable Object instance from a Worker
-	 * @returns The greeting to be sent back to the Worker
-	 */
-	async sayHello(name: string): Promise<string> {
-		return `Hello, ${name}!`;
-	}
+const ShopifyProductsSchema = z.object({
+	products: z.array(
+		z.object({
+			title: z.string(),
+			handle: z.string(),
+			variants: z.array(
+				z.object({
+					title: z.string(),
+					available: z.boolean(),
+					price: z.string(),
+					updated_at: z.string(),
+				})
+			),
+		})
+	),
+});
+
+interface Coffee {
+	title: string;
+	handle: string;
+	price: string;
+	updatedAt: Date;
 }
 
 export default {
-	/**
-	 * This is the standard fetch handler for a Cloudflare Worker
-	 *
-	 * @param request - The request submitted to the Worker from the client
-	 * @param env - The interface to reference bindings declared in wrangler.toml
-	 * @param ctx - The execution context of the Worker
-	 * @returns The response to be sent back to the client
-	 */
-	async fetch(request, env, ctx): Promise<Response> {
-		// We will create a `DurableObjectId` using the pathname from the Worker request
-		// This id refers to a unique instance of our 'MyDurableObject' class above
-		let id: DurableObjectId = env.MY_DURABLE_OBJECT.idFromName(new URL(request.url).pathname);
+	async scheduled(event, env, ctx) {
+		try {
+			await sendDiagnostic(env, 'Bot started');
 
-		// This stub creates a communication channel with the Durable Object instance
-		// The Durable Object constructor will be invoked upon the first call for a given id
-		let stub = env.MY_DURABLE_OBJECT.get(id);
+			const { coffees, cacheRepr, updatedAt } = await getAvailableCoffees(env);
 
-		// We call the `sayHello()` RPC method on the stub to invoke the method on the remote
-		// Durable Object instance
-		let greeting = await stub.sayHello("world");
+			if ((await env.instant_coffee.get(CACHE_NAME)) === cacheRepr) {
+				await sendDiagnostic(env, 'No products changed, skipping');
+			} else {
+				let botMessage: string[] = [];
 
-		return new Response(greeting);
+				if (coffees.length === 0) {
+					botMessage.push('Black & White no longer has any instant coffees available.');
+				} else {
+					botMessage.push('Black & White has a new selection of instant coffees:');
+					for (let coffee of coffees) {
+						const price = `$${coffee.price}`;
+						botMessage.push(`- ☕️ ${coffee.title.replace(' - Instant Coffee', '')} (${price})`);
+					}
+
+					botMessage.push(`→ [View the collection](${BASE_URL}/collections/${SECTION_NAME})`);
+				}
+
+				if (updatedAt) {
+					botMessage.push(
+						`-# Black & White's instant coffee inventory last changed on ${new Date(updatedAt).toLocaleTimeString('en-US', {
+							month: 'long',
+							day: 'numeric',
+							year: 'numeric',
+							timeZone: 'UTC',
+						})} UTC.`
+					);
+				}
+
+				env.instant_coffee.put(CACHE_NAME, cacheRepr);
+				await sendFriendlyMessage(env, botMessage.join('\n'));
+			}
+
+			await sendDiagnostic(env, 'Bot finished successfully');
+		} catch (error) {
+			await sendDiagnostic(env, `Bot failed: ${(error as any).message}`);
+			throw error;
+		}
 	},
 } satisfies ExportedHandler<Env>;
+
+async function getAvailableCoffees(env: Env): Promise<{ coffees: Coffee[]; cacheRepr: string; updatedAt: Date | null }> {
+	const request = await fetch(PRODUCTS_ENDPOINT, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+	const json = await request.json();
+	const products = ShopifyProductsSchema.parse(json).products;
+
+	sendDiagnostic(env, 'Received response from Shopify:\n```json\n' + JSON.stringify(products, null, 2) + '\n```');
+
+	const coffees: Coffee[] = products.flatMap((product) => {
+		if (product.variants.length !== 1) throw new Error(`Expected exactly one variant per product, response was ${JSON.stringify(product)}`);
+
+		return product.variants
+			.filter((variant) => variant.available)
+			.map((variant) => {
+				return {
+					title: product.title,
+					handle: product.handle,
+					price: variant.price,
+					updatedAt: new Date(variant.updated_at),
+				};
+			})
+			.sort((a, b) => a.title.localeCompare(b.title));
+	});
+
+	const cacheKey = coffees.map((coffee) => coffee.handle).join('-');
+
+	const updatedAt =
+		products.length > 0
+			? products
+					.flatMap((product) => product.variants)
+					.reduce((latest, variant) => (new Date(variant.updated_at) > latest ? new Date(variant.updated_at) : latest), new Date(0))
+			: null;
+
+	return { coffees, cacheRepr: cacheKey, updatedAt };
+}
+
+async function sendFriendlyMessage(env: Env, message: string) {
+	await sendDiscordMessage(env.DISCORD_WEBHOOK_URL, message);
+}
+
+async function sendDiagnostic(env: Env, message: string) {
+	await sendDiscordMessage(env.DISCORD_WEBHOOK_HEARTBEAT_URL, message);
+}
+
+async function sendDiscordMessage(url: string, message: string) {
+	await fetch(url, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content: message }),
+	});
+}
