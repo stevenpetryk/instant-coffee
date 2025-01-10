@@ -14,12 +14,12 @@ const ShopifyProductsSchema = z.object({
 		z.object({
 			title: z.string(),
 			handle: z.string(),
+			published_at: z.string(),
 			variants: z.array(
 				z.object({
 					title: z.string(),
 					available: z.boolean(),
 					price: z.string(),
-					updated_at: z.string(),
 				})
 			),
 		})
@@ -30,7 +30,6 @@ interface Coffee {
 	title: string;
 	handle: string;
 	price: string;
-	updatedAt: Date;
 }
 
 export default {
@@ -39,9 +38,14 @@ export default {
 			await sendDiagnostic(env, 'Bot started');
 
 			const { coffees, cacheRepr, updatedAt } = await getAvailableCoffees(env);
+			console.log(JSON.stringify(cacheRepr));
 
-			if ((await env.instant_coffee.get(CACHE_NAME)) === cacheRepr) {
-				await sendDiagnostic(env, 'No products changed, skipping');
+			const cachedCoffees = await cacheGet(env);
+
+			if (cachedCoffees === cacheRepr) {
+				await sendDiagnostic(env, 'Products have not changed, skipping');
+			} else if (cachedCoffees && arrayIsNonEmptySubset(cacheRepr, cachedCoffees)) {
+				await sendDiagnostic(env, 'No new products, skipping');
 			} else {
 				let botMessage: string[] = [];
 
@@ -68,24 +72,25 @@ export default {
 					);
 				}
 
-				env.instant_coffee.put(CACHE_NAME, cacheRepr);
+				cachePut(env, cacheRepr);
 				await sendFriendlyMessage(env, botMessage.join('\n'));
 			}
 
 			await sendDiagnostic(env, 'Bot finished successfully');
 		} catch (error) {
-			await sendDiagnostic(env, `Bot failed: ${(error as any).message}`);
+			await sendDiagnostic(env, `Bot failed:\n\`\`\`\n${(error as any).message}\n${(error as any).stack}\n\`\`\``);
+
 			throw error;
 		}
 	},
 } satisfies ExportedHandler<Env>;
 
-async function getAvailableCoffees(env: Env): Promise<{ coffees: Coffee[]; cacheRepr: string; updatedAt: Date | null }> {
+async function getAvailableCoffees(env: Env): Promise<{ coffees: Coffee[]; cacheRepr: string[]; updatedAt: Date | null }> {
 	const request = await fetch(PRODUCTS_ENDPOINT, { headers: { 'User-Agent': 'Mozilla/5.0' } });
 	const json = await request.json();
 	const products = ShopifyProductsSchema.parse(json).products;
 
-	sendDiagnostic(env, 'Received response from Shopify:\n```json\n' + JSON.stringify(products, null, 2) + '\n```');
+	sendDiagnostic(env, 'Received response from Shopify:\n```json\n' + JSON.stringify(products) + '\n```');
 
 	const coffees: Coffee[] = products.flatMap((product) => {
 		if (product.variants.length !== 1) throw new Error(`Expected exactly one variant per product, response was ${JSON.stringify(product)}`);
@@ -97,22 +102,39 @@ async function getAvailableCoffees(env: Env): Promise<{ coffees: Coffee[]; cache
 					title: product.title,
 					handle: product.handle,
 					price: variant.price,
-					updatedAt: new Date(variant.updated_at),
 				};
 			})
 			.sort((a, b) => a.title.localeCompare(b.title));
 	});
 
-	const cacheKey = coffees.map((coffee) => coffee.handle).join('-');
+	const cacheRepr = coffees.map((coffee) => coffee.handle);
 
 	const updatedAt =
 		products.length > 0
-			? products
-					.flatMap((product) => product.variants)
-					.reduce((latest, variant) => (new Date(variant.updated_at) > latest ? new Date(variant.updated_at) : latest), new Date(0))
+			? products.reduce(
+					(latest, variant) => (new Date(variant.published_at) > latest ? new Date(variant.published_at) : latest),
+					new Date(0)
+			  )
 			: null;
 
-	return { coffees, cacheRepr: cacheKey, updatedAt };
+	return { coffees, cacheRepr, updatedAt };
+}
+
+async function cachePut(env: Env, value: any) {
+	await env.instant_coffee.put(CACHE_NAME, JSON.stringify(value));
+}
+
+async function cacheGet(env: Env): Promise<string[] | null> {
+	const value = await env.instant_coffee.get(CACHE_NAME);
+	try {
+		return value ? JSON.parse(value) : null;
+	} catch (error) {
+		return null;
+	}
+}
+
+function arrayIsNonEmptySubset(subset: any[], arr: any[]): boolean {
+	return subset.length > 0 && subset.every((item) => arr.includes(item));
 }
 
 async function sendFriendlyMessage(env: Env, message: string) {
