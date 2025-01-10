@@ -38,7 +38,6 @@ export default {
 			await sendDiagnostic(env, 'Bot started');
 
 			const { coffees, cacheRepr, updatedAt } = await getAvailableCoffees(env);
-			console.log(JSON.stringify(cacheRepr));
 
 			const cachedCoffees = await cacheGet(env);
 
@@ -63,12 +62,12 @@ export default {
 
 				if (updatedAt) {
 					botMessage.push(
-						`-# Black & White's instant coffee inventory last changed on ${new Date(updatedAt).toLocaleTimeString('en-US', {
+						`-# Black & White's instant coffee inventory last changed on ${updatedAt.toLocaleTimeString('en-US', {
 							month: 'long',
 							day: 'numeric',
 							year: 'numeric',
-							timeZone: 'UTC',
-						})} UTC.`
+							timeZone: 'America/New York',
+						})} ET.`
 					);
 				}
 
