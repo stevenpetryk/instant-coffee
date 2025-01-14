@@ -49,7 +49,7 @@ export default {
 				let botMessage: string[] = [];
 
 				if (coffees.length === 0) {
-					botMessage.push('Black & White no longer has any instant coffees available.');
+					sendDiagnostic(env, 'Black & White no longer has any instant coffees available.');
 				} else {
 					botMessage.push('Black & White has a new selection of instant coffees:');
 					for (let coffee of coffees) {
