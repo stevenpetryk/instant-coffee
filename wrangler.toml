@@ -11,8 +11,8 @@ workers_dev = false
 enabled = true
 
 [triggers]
-# Run M-F every hour
-crons = ["0 * * * 1-5"]
+# Run every hour
+crons = ["0 * * * *"]
 
 [[kv_namespaces]]
 binding = "instant_coffee"
