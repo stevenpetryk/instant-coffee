@@ -66,7 +66,7 @@ export default {
 							month: 'long',
 							day: 'numeric',
 							year: 'numeric',
-							timeZone: 'America/New York',
+							timeZone: 'America/New_York',
 						})} ET.`
 					);
 				}
