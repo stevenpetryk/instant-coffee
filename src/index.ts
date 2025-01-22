@@ -1,4 +1,3 @@
-import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 
 // Increment and deploy to invalidate cache
@@ -41,9 +40,7 @@ export default {
 
 			const cachedCoffees = await cacheGet(env);
 
-			if (cachedCoffees === cacheRepr) {
-				await sendDiagnostic(env, 'Products have not changed, skipping');
-			} else if (cachedCoffees && arrayIsNonEmptySubset(cacheRepr, cachedCoffees)) {
+			if (cachedCoffees && arrayIsSubset(cacheRepr, cachedCoffees)) {
 				await sendDiagnostic(env, 'No new products, skipping');
 			} else {
 				let botMessage: string[] = [];
@@ -132,8 +129,8 @@ async function cacheGet(env: Env): Promise<string[] | null> {
 	}
 }
 
-function arrayIsNonEmptySubset(subset: any[], arr: any[]): boolean {
-	return subset.length > 0 && subset.every((item) => arr.includes(item));
+function arrayIsSubset(subset: any[], arr: any[]): boolean {
+	return subset.every((item) => arr.includes(item));
 }
 
 async function sendFriendlyMessage(env: Env, message: string) {
