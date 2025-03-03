@@ -9,11 +9,13 @@
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
-    "typescript": "^5.5.2",
-    "wrangler": "^3.60.3"
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "@types/jsonwebtoken": "^9.0.9",
+    "typescript": "^5.8.2",
+    "wrangler": "^3.110.0"
   },
   "dependencies": {
-    "zod": "^3.24.1"
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^3.24.2"
   }
 }

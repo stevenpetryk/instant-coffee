@@ -1,10 +1,11 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "instant-coffee"
 main = "src/index.ts"
-compatibility_date = "2025-01-09"
+compatibility_date = "2025-03-03"
+compatibility_flags = ["nodejs_compat"]
 
-# No public URL since this worker is meant for scheduled work
-workers_dev = false
+# Public URL so that we can serve image composites of the instant coffee labels
+workers_dev = true
 
 # Workers Logs
 [observability]
@@ -14,9 +15,13 @@ enabled = true
 # Run every hour
 crons = ["0 * * * *"]
 
+[images]
+binding = "IMAGES"
+
 [[kv_namespaces]]
 binding = "instant_coffee"
 id = "48e99119a1e2475187e8bdbbb2af2704"
+# preview_id = "a0b0b589a45045f6af4549178c20f491"
 
 [[migrations]]
 tag = "v1"
@@ -25,3 +30,6 @@ new_classes = ["MyDurableObject"]
 [[migrations]]
 tag = "v2"
 deleted_classes = ["MyDurableObject"]
+
+[vars]
+PUBLIC_URL = "https://instant-coffee.stevenpetryk.workers.dev"

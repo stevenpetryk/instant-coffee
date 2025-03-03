@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import jwt from 'jsonwebtoken';
 
 // Increment and deploy to invalidate cache
 const CACHE_NAME = 'items-v1';
+
+import { compositeImages } from './image';
 
 // Shopify API stuff
 const BASE_URL = 'https://www.blackwhiteroasters.com';
@@ -21,14 +24,20 @@ const ShopifyProductsSchema = z.object({
 					price: z.string(),
 				})
 			),
+			images: z.array(z.object({ src: z.string() })),
 		})
 	),
+});
+
+const JwtPayloadSchema = z.object({
+	images: z.array(z.string()),
 });
 
 interface Coffee {
 	title: string;
 	handle: string;
 	price: string;
+	imageUrl: string;
 }
 
 export default {
@@ -38,6 +47,11 @@ export default {
 
 			const { coffees, cacheRepr, updatedAt } = await getAvailableCoffees(env);
 
+			const imageUrls = coffees.map((coffee) => coffee.imageUrl);
+			const imagePayload = JwtPayloadSchema.parse({ images: imageUrls });
+			const imageToken = jwt.sign(imagePayload, env.JWT_SECRET);
+			const imageUrl = new URL(env.PUBLIC_URL);
+			imageUrl.searchParams.set('payload', imageToken);
 			const cachedCoffees = await cacheGet(env);
 
 			if (cachedCoffees && arrayIsSubset(cacheRepr, cachedCoffees)) {
@@ -48,7 +62,8 @@ export default {
 				if (coffees.length === 0) {
 					sendDiagnostic(env, 'Black & White no longer has any instant coffees available.');
 				} else {
-					botMessage.push('Black & White has a new selection of instant coffees:');
+					botMessage.push(`Black & White has a new selection of instant coffees:`);
+
 					for (let coffee of coffees) {
 						const price = `$${coffee.price}`;
 						botMessage.push(`- ☕️ ${coffee.title.replace(' - Instant Coffee', '')} (${price})`);
@@ -64,7 +79,8 @@ export default {
 							day: 'numeric',
 							year: 'numeric',
 							timeZone: 'America/New_York',
-						})} ET.`
+						})} ET[.](${imageUrl.toString()})`
+						//     ^ To be stealthy with the link.
 					);
 				}
 
@@ -78,6 +94,18 @@ export default {
 
 			throw error;
 		}
+	},
+
+	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+		const payload = new URL(request.url).searchParams.get('payload');
+
+		if (!payload) {
+			return new Response('No payload provided', { status: 400 });
+		}
+
+		const verifiedPayload = JwtPayloadSchema.parse(jwt.verify(payload, env.JWT_SECRET));
+		const imageTransformer = await compositeImages(env, verifiedPayload.images);
+		return imageTransformer.response();
 	},
 } satisfies ExportedHandler<Env>;
 
@@ -98,6 +126,7 @@ async function getAvailableCoffees(env: Env): Promise<{ coffees: Coffee[]; cache
 					title: product.title,
 					handle: product.handle,
 					price: variant.price,
+					imageUrl: product.images[0].src,
 				};
 			})
 			.sort((a, b) => a.title.localeCompare(b.title));
