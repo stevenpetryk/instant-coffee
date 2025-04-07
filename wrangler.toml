@@ -12,8 +12,8 @@ workers_dev = true
 enabled = true
 
 [triggers]
-# Run every hour
-crons = ["0 * * * *"]
+# Run every half hour on weekdays
+crons = ["0,30 * * * 1-5"]
 
 [images]
 binding = "IMAGES"

@@ -54,9 +54,13 @@ export default {
 			imageUrl.searchParams.set('payload', imageToken);
 			const cachedCoffees = await cacheGet(env);
 
+			await sendDiagnostic(env, `Cached: ${cachedCoffees?.join(',') ?? '<none>'}`);
+			await sendDiagnostic(env, `New: ${cacheRepr.join(',')}`);
+
 			if (cachedCoffees && arrayIsSubset(cacheRepr, cachedCoffees)) {
 				await sendDiagnostic(env, 'No new products, skipping');
 			} else {
+				await sendDiagnostic(env, '**New products found**');
 				let botMessage: string[] = [];
 
 				if (coffees.length === 0) {
@@ -113,8 +117,6 @@ async function getAvailableCoffees(env: Env): Promise<{ coffees: Coffee[]; cache
 	const request = await fetch(PRODUCTS_ENDPOINT, { headers: { 'User-Agent': 'Mozilla/5.0' } });
 	const json = await request.json();
 	const products = ShopifyProductsSchema.parse(json).products;
-
-	sendDiagnostic(env, 'Received response from Shopify:\n```json\n' + JSON.stringify(products) + '\n```');
 
 	const coffees: Coffee[] = products.flatMap((product) => {
 		if (product.variants.length !== 1) throw new Error(`Expected exactly one variant per product, response was ${JSON.stringify(product)}`);
